@@ -22,8 +22,22 @@ const ProductForm: React.FC<{
   categories: Category[];
   isSubmitting: boolean;
 }> = ({ product, onSave, onClose, categories, isSubmitting }) => {
+  // Helper to generate random SKU
+  const generateAutoSKU = () => `SKU-${Math.floor(100000 + Math.random() * 900000)}`;
+
   const [formData, setFormData] = useState<Product>(
-    product || { id: '', name: '', sku: '', category: '', price: 0, hpp: 0, stock: 0, imageUrl: `https://picsum.photos/id/${Math.floor(Math.random()*200 + 100)}/200/200`, isDivisible: false, trackStock: true }
+    product || { 
+        id: '', 
+        name: '', 
+        sku: generateAutoSKU(), // Automatically set SKU for new products
+        category: '', 
+        price: 0, 
+        hpp: 0, 
+        stock: 0, 
+        imageUrl: `https://picsum.photos/id/${Math.floor(Math.random()*200 + 100)}/200/200`, 
+        isDivisible: false, 
+        trackStock: true 
+    }
   );
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -49,8 +63,18 @@ const ProductForm: React.FC<{
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700">SKU</label>
-          <input type="text" name="sku" value={formData.sku} onChange={handleChange} className="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm" />
+          <label className="block text-sm font-medium text-gray-700">SKU (Otomatis)</label>
+          <div className="flex gap-2">
+            <input type="text" name="sku" value={formData.sku} onChange={handleChange} className="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm" />
+            <button
+                type="button"
+                onClick={() => setFormData(prev => ({ ...prev, sku: generateAutoSKU() }))}
+                className="mt-1 px-3 py-2 bg-gray-100 text-gray-600 rounded-md border border-gray-300 hover:bg-gray-200 text-xs font-bold"
+                title="Acak SKU Baru"
+            >
+                AUTO
+            </button>
+          </div>
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700">Kategori</label>
@@ -170,6 +194,10 @@ const ProductManager: React.FC<ProductManagerProps> = ({ products, suppliers, se
   const [isModalOpen, setModalOpen] = useState(false);
   const [isStockInModalOpen, setStockInModalOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  
+  // New State for Delete Confirmation Modal
+  const [productToDelete, setProductToDelete] = useState<Product | null>(null);
+  
   const [isClearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -206,13 +234,22 @@ const ProductManager: React.FC<ProductManagerProps> = ({ products, suppliers, se
     setModalOpen(true);
   };
 
-  const handleDeleteProduct = async (product: Product) => {
-      if (confirm(`Apakah Anda yakin ingin menghapus produk "${product.name}"?`)) {
-          const { error } = await supabase.from('products').delete().eq('id', product.id);
-          if (error) alert("Gagal menghapus produk.");
-          else onRefresh();
+  const handleOpenDeleteModal = (product: Product) => {
+      setProductToDelete(product);
+  };
+
+  const confirmDeleteProduct = async () => {
+      if (!productToDelete) return;
+      
+      const { error } = await supabase.from('products').delete().eq('id', productToDelete.id);
+      if (error) {
+          console.error("Delete error:", error);
+          alert("Gagal menghapus produk. Mungkin produk ini sudah terhubung dengan transaksi lain.");
+      } else {
+          onRefresh();
+          setProductToDelete(null);
       }
-  }
+  };
 
   const handleOpenStockIn = (product: Product) => {
     setSelectedProduct(product);
@@ -241,9 +278,6 @@ const ProductManager: React.FC<ProductManagerProps> = ({ products, suppliers, se
                 payments: [],
             };
             await supabase.from('payables').insert([newPayable]);
-        } else if (payment === 'Lunas') {
-            // Optional: Record as Expense? Or just inventory asset increase.
-            // For now, we just increase stock.
         }
         
         onRefresh();
@@ -304,15 +338,8 @@ const ProductManager: React.FC<ProductManagerProps> = ({ products, suppliers, se
 
   const handleDownloadTemplate = () => {
     const headers = ['name', 'sku', 'category', 'price', 'hpp', 'stock', 'isDivisible', 'trackStock'];
-    
-    // Row 1: Standard Product
     const row1 = ['Kopi Hitam', 'KOPI-001', 'Minuman', '15000', '5000', '100', 'FALSE', 'TRUE'];
-    
-    // Row 2: Divisible/Retail Product Example (e.g., sold by weight/kg)
-    // This addresses the user requirement to see how to set "isDivisible"
     const row2 = ['Mentimun (per kg)', 'VEG-001', 'Sayuran', '10000', '8000', '50', 'TRUE', 'TRUE'];
-    
-    // Row 3: Non-stock/Service Item Example
     const row3 = ['Jasa Bungkus', 'SRV-001', 'Lainnya', '2000', '0', '0', 'FALSE', 'FALSE'];
 
     const csvContent = [headers.join(','), row1.join(','), row2.join(','), row3.join(',')].join('\n');
@@ -322,7 +349,6 @@ const ProductManager: React.FC<ProductManagerProps> = ({ products, suppliers, se
   const handleExportProducts = () => {
     const headers = ['id', 'name', 'sku', 'category', 'price', 'hpp', 'stock', 'imageUrl', 'isDivisible', 'trackStock'];
     const rows = products.map(p => {
-        // Helper to escape CSV fields containing quotes, commas, etc.
         const escape = (field: any) => {
             const str = String(field !== undefined ? field : '');
             if (str.includes(',') || str.includes('"') || str.includes('\n')) {
@@ -367,16 +393,13 @@ const ProductManager: React.FC<ProductManagerProps> = ({ products, suppliers, se
             return;
         }
 
-        // Parse headers using robust parser
         const headers = parseCSVLine(lines[0]).map(h => h.trim());
-        
         const newProducts: Product[] = [];
         let successCount = 0;
 
         for (let i = 1; i < lines.length; i++) {
             const values = parseCSVLine(lines[i]);
-            
-            if (values.length < 5) continue; // Skip malformed rows
+            if (values.length < 5) continue; 
 
             const getVal = (headerName: string) => {
                 const index = headers.indexOf(headerName);
@@ -395,16 +418,14 @@ const ProductManager: React.FC<ProductManagerProps> = ({ products, suppliers, se
                 hpp: parseFloat(getVal('hpp')) || 0,
                 stock: parseFloat(getVal('stock')) || 0,
                 imageUrl: getVal('imageUrl') || `https://picsum.photos/id/${Math.floor(Math.random()*200 + 100)}/200/200`,
-                // Case-insensitive check for TRUE
                 isDivisible: getVal('isDivisible').toUpperCase() === 'TRUE',
-                trackStock: getVal('trackStock').toUpperCase() !== 'FALSE', // Default true if missing
+                trackStock: getVal('trackStock').toUpperCase() !== 'FALSE', 
             };
             newProducts.push(product);
             successCount++;
         }
 
         if (successCount > 0) {
-            // Batch Insert
             const { error } = await supabase.from('products').insert(newProducts);
             if (error) alert("Gagal import batch.");
             else {
@@ -414,8 +435,6 @@ const ProductManager: React.FC<ProductManagerProps> = ({ products, suppliers, se
         } else {
             alert("Gagal mengimpor produk. Pastikan format sesuai template.");
         }
-        
-        // Reset input
         if (fileInputRef.current) fileInputRef.current.value = '';
     };
     reader.readAsText(file);
@@ -426,48 +445,33 @@ const ProductManager: React.FC<ProductManagerProps> = ({ products, suppliers, se
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <h1 className="text-3xl font-bold">Manajemen Produk & Stok</h1>
         <div className="flex flex-wrap items-center gap-2">
-             <input 
-                type="file" 
-                accept=".csv" 
-                ref={fileInputRef} 
-                onChange={handleFileChange} 
-                className="hidden" 
-            />
-            
+             <input type="file" accept=".csv" ref={fileInputRef} onChange={handleFileChange} className="hidden" />
             <div className="flex gap-2">
                 <button onClick={handleDownloadTemplate} className="flex items-center gap-2 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 border text-sm" title="Unduh contoh format CSV">
-                    <Icon name="file-text" className="w-4 h-4" />
-                    Template
+                    <Icon name="file-text" className="w-4 h-4" /> Template
                 </button>
                 <button onClick={handleExportProducts} className="flex items-center gap-2 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 border text-sm">
-                    <Icon name="download" className="w-4 h-4" />
-                    Export
+                    <Icon name="download" className="w-4 h-4" /> Export
                 </button>
                 <button onClick={handleImportClick} className="flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm">
-                    <Icon name="upload" className="w-4 h-4" />
-                    Import
+                    <Icon name="upload" className="w-4 h-4" /> Import
                 </button>
             </div>
-
             <div className="h-8 w-px bg-gray-300 mx-1 hidden md:block"></div>
-
             <button
                 onClick={() => setClearConfirmOpen(true)}
                 className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-gray-400 text-sm"
                 disabled={products.length === 0}
             >
-                <Icon name="trash" className="w-4 h-4" />
-                Kosongkan
+                <Icon name="trash" className="w-4 h-4" /> Kosongkan
             </button>
             <button onClick={() => { setSelectedProduct(null); setModalOpen(true); }} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm">
-                <Icon name="plus" className="w-4 h-4" />
-                Tambah
+                <Icon name="plus" className="w-4 h-4" /> Tambah
             </button>
         </div>
       </div>
 
       <div className="bg-white p-4 rounded-lg shadow-md">
-        {/* Added Search Bar */}
         <div className="mb-4">
             <div className="relative w-full md:w-1/3">
                  <Icon name="search" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
@@ -512,7 +516,7 @@ const ProductManager: React.FC<ProductManagerProps> = ({ products, suppliers, se
                     <button onClick={() => handleEdit(p)} className="p-1 text-blue-600 hover:text-blue-800" title="Edit">
                         <Icon name="edit" className="w-5 h-5"/>
                     </button>
-                    <button onClick={() => handleDeleteProduct(p)} className="p-1 text-red-600 hover:text-red-800" title="Hapus">
+                    <button onClick={() => handleOpenDeleteModal(p)} className="p-1 text-red-600 hover:text-red-800" title="Hapus">
                         <Icon name="trash" className="w-5 h-5"/>
                     </button>
                   </td>
@@ -534,6 +538,17 @@ const ProductManager: React.FC<ProductManagerProps> = ({ products, suppliers, se
       
       <Modal isOpen={isModalOpen} onClose={() => setModalOpen(false)} title={selectedProduct ? 'Edit Produk' : 'Tambah Produk Baru'}>
         <ProductForm product={selectedProduct} onSave={handleSaveProduct} onClose={() => setModalOpen(false)} categories={categories} isSubmitting={isSubmitting} />
+      </Modal>
+
+      {/* Delete Confirmation Modal */}
+      <Modal isOpen={!!productToDelete} onClose={() => setProductToDelete(null)} title="Konfirmasi Hapus" size="sm">
+          <div className="space-y-4">
+              <p>Apakah Anda yakin ingin menghapus produk <strong>"{productToDelete?.name}"</strong>?</p>
+              <div className="flex justify-end space-x-2 pt-4">
+                  <button onClick={() => setProductToDelete(null)} className="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300">Batal</button>
+                  <button onClick={confirmDeleteProduct} className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">Ya, Hapus</button>
+              </div>
+          </div>
       </Modal>
 
       <Modal isOpen={isClearConfirmOpen} onClose={() => setClearConfirmOpen(false)} title="Konfirmasi Kosongkan Data">

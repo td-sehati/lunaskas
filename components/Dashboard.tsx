@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { Transaction, Receivable, Payable, Expense, Product } from '../types';
 import Icon from './common/Icon';
@@ -13,7 +14,7 @@ interface DashboardProps {
 
 const formatCurrency = (amount: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(amount);
 
-const StatCard: React.FC<{ title: string; value: string; iconName: React.ComponentProps<typeof Icon>['name']; color: string }> = ({ title, value, iconName, color }) => (
+const StatCard: React.FC<{ title: string; value: string; iconName: React.ComponentProps<typeof Icon>['name']; color: string; subtitle?: string }> = ({ title, value, iconName, color, subtitle }) => (
     <div className="bg-white p-6 rounded-lg shadow-md flex items-center space-x-4">
         <div className={`p-3 rounded-full ${color}`}>
             <Icon name={iconName} className="w-6 h-6 text-white" />
@@ -21,30 +22,46 @@ const StatCard: React.FC<{ title: string; value: string; iconName: React.Compone
         <div>
             <p className="text-sm text-gray-500">{title}</p>
             <p className="text-2xl font-bold text-gray-800">{value}</p>
+            {subtitle && <p className="text-xs text-gray-400 mt-1">{subtitle}</p>}
         </div>
     </div>
 );
 
 
 const Dashboard: React.FC<DashboardProps> = ({ transactions, receivables, payables, expenses, products }) => {
-    const today = new Date().toISOString().slice(0, 10);
-    const todayTransactions = transactions.filter(t => t.createdAt.startsWith(today));
+    // Helper to get Local Date String (YYYY-MM-DD) correctly based on Browser Timezone
+    const getLocalDate = (dateInput: string | Date) => {
+        const d = new Date(dateInput);
+        const offset = d.getTimezoneOffset() * 60000;
+        const localDate = new Date(d.getTime() - offset);
+        return localDate.toISOString().slice(0, 10);
+    };
+
+    const todayLocal = getLocalDate(new Date());
+    
+    // Filter transactions for TODAY only (Local Time)
+    const todayTransactions = transactions.filter(t => getLocalDate(t.createdAt) === todayLocal);
 
     const totalRevenueToday = todayTransactions.reduce((sum, t) => sum + t.total, 0);
     const totalHppToday = todayTransactions.reduce((sum, t) => sum + t.totalHPP, 0);
     const grossProfitToday = totalRevenueToday - totalHppToday;
 
-    const totalReceivables = receivables.reduce((sum, r) => sum + (r.totalAmount - r.paidAmount), 0);
-    const totalPayables = payables.reduce((sum, p) => sum + (p.totalAmount - p.paidAmount), 0);
+    // --- PERUBAHAN: Filter Piutang & Utang HANYA HARI INI ---
+    const receivablesToday = receivables.filter(r => getLocalDate(r.createdAt) === todayLocal);
+    const payablesToday = payables.filter(p => getLocalDate(p.createdAt) === todayLocal);
+
+    // Hitung sisa yang belum dibayar dari transaksi HARI INI
+    const totalReceivablesToday = receivablesToday.reduce((sum, r) => sum + (r.totalAmount - r.paidAmount), 0);
+    const totalPayablesToday = payablesToday.reduce((sum, p) => sum + (p.totalAmount - p.paidAmount), 0);
     
-    // Calculate actual cash inflow for today
+    // Calculate actual cash inflow for today (Local Time)
     const cashSalesToday = todayTransactions
         .filter(t => t.paymentMethod !== 'Pay Later')
         .reduce((sum, t) => sum + t.total, 0);
     
     const debtPaymentsToday = receivables
         .flatMap(r => r.payments)
-        .filter(p => p.paymentDate.startsWith(today))
+        .filter(p => getLocalDate(p.paymentDate) === todayLocal)
         .reduce((sum, p) => sum + p.amount, 0);
 
     const totalCashInflowToday = cashSalesToday + debtPaymentsToday;
@@ -55,37 +72,54 @@ const Dashboard: React.FC<DashboardProps> = ({ transactions, receivables, payabl
     const salesData = Array.from({ length: 7 }).map((_, i) => {
         const d = new Date();
         d.setDate(d.getDate() - i);
-        const dateString = d.toISOString().slice(0, 10);
+        const dateStringLocal = getLocalDate(d);
+        
         const dailySales = transactions
-            .filter(t => t.createdAt.startsWith(dateString))
+            .filter(t => getLocalDate(t.createdAt) === dateStringLocal)
             .reduce((sum, t) => sum + t.total, 0);
+            
         return { name: d.toLocaleDateString('id-ID', { weekday: 'short' }), Omzet: dailySales };
     }).reverse();
-
-    // Data for product category pie chart
-    const categoryData = products.reduce((acc, product) => {
-        const category = product.category || 'Lainnya';
-        if (!acc[category]) {
-            acc[category] = 0;
-        }
-        acc[category] += product.stock;
-        return acc;
-    }, {} as Record<string, number>);
-
-    const pieData = Object.entries(categoryData).map(([name, value]) => ({ name, value }));
-    const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#AF19FF'];
-
 
   return (
     <div className="space-y-6">
       <h1 className="text-3xl font-bold text-gray-800">Dashboard</h1>
       
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-        <StatCard title="Omzet Hari Ini" value={formatCurrency(totalRevenueToday)} iconName="dollar" color="bg-green-500" />
-        <StatCard title="Kas Masuk Hari Ini" value={formatCurrency(totalCashInflowToday)} iconName="check" color="bg-indigo-500" />
-        <StatCard title="Laba Kotor Hari Ini" value={formatCurrency(grossProfitToday)} iconName="trending-up" color="bg-blue-500" />
-        <StatCard title="Total Piutang" value={formatCurrency(totalReceivables)} iconName="arrow-down" color="bg-yellow-500" />
-        <StatCard title="Total Utang" value={formatCurrency(totalPayables)} iconName="arrow-up" color="bg-red-500" />
+        <StatCard 
+            title="Omzet Hari Ini" 
+            value={formatCurrency(totalRevenueToday)} 
+            iconName="dollar" 
+            color="bg-green-500" 
+            subtitle="Reset setiap hari 00:00"
+        />
+        <StatCard 
+            title="Kas Masuk Hari Ini" 
+            value={formatCurrency(totalCashInflowToday)} 
+            iconName="check" 
+            color="bg-indigo-500"
+            subtitle="Tunai + Cicilan diterima hari ini"
+        />
+        <StatCard 
+            title="Laba Kotor Hari Ini" 
+            value={formatCurrency(grossProfitToday)} 
+            iconName="trending-up" 
+            color="bg-blue-500" 
+        />
+        <StatCard 
+            title="Piutang Baru (Hari Ini)" 
+            value={formatCurrency(totalReceivablesToday)} 
+            iconName="arrow-down" 
+            color="bg-yellow-500"
+            subtitle="Utang pelanggan yang dibuat hari ini"
+        />
+        <StatCard 
+            title="Utang Baru (Hari Ini)" 
+            value={formatCurrency(totalPayablesToday)} 
+            iconName="arrow-up" 
+            color="bg-red-500" 
+            subtitle="Utang toko ke supplier hari ini"
+        />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

@@ -14,27 +14,32 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, size = 
   if (!isOpen) return null;
 
   const sizeClasses = {
-    sm: 'max-w-sm',
-    md: 'max-w-md',
-    lg: 'max-w-lg',
-    xl: 'max-w-xl',
+    sm: 'md:max-w-sm',
+    md: 'md:max-w-md',
+    lg: 'md:max-w-lg',
+    xl: 'md:max-w-xl',
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 transition-opacity duration-300">
-      <div className={`relative w-full p-4 mx-4 bg-white rounded-lg shadow-xl transform transition-all duration-300 ${sizeClasses[size]}`}>
-        <div className="flex items-start justify-between pb-4 border-b rounded-t">
-          <h3 className="text-xl font-semibold text-gray-900">{title}</h3>
+    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black bg-opacity-50 transition-opacity duration-300 backdrop-blur-sm">
+      {/* Mobile: w-full h-full (or close to it) with rounded-t-xl. Desktop: centered rounded-lg */}
+      <div className={`
+          relative w-full h-[95vh] md:h-auto md:max-h-[90vh] bg-white 
+          rounded-t-2xl md:rounded-lg shadow-xl transform transition-all duration-300 flex flex-col
+          ${sizeClasses[size]} mx-auto md:mx-4
+      `}>
+        <div className="flex items-center justify-between p-4 border-b rounded-t-2xl md:rounded-t-lg shrink-0">
+          <h3 className="text-xl font-bold text-gray-900">{title}</h3>
           <button
             type="button"
-            className="text-gray-400 bg-transparent hover:bg-gray-200 hover:text-gray-900 rounded-lg text-sm p-1.5 ml-auto inline-flex items-center"
+            className="text-gray-400 bg-transparent hover:bg-gray-100 hover:text-gray-900 rounded-full p-2 inline-flex items-center justify-center transition-colors"
             onClick={onClose}
           >
-            <Icon name="x" className="w-5 h-5" />
+            <Icon name="x" className="w-6 h-6" />
             <span className="sr-only">Close modal</span>
           </button>
         </div>
-        <div className="py-6 space-y-6 max-h-[70vh] overflow-y-auto">
+        <div className="p-4 md:p-6 space-y-4 overflow-y-auto flex-1">
           {children}
         </div>
       </div>

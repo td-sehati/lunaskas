@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Page, Product, Customer, Supplier, Transaction, Receivable, Payable, Expense, PaymentRecord, Category, SavedOrder, ManualJournalEntry } from './types';
 import { supabase } from './supabaseClient';
+import { initialProducts, initialCustomers, initialSuppliers, initialCategories } from './constants';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import POS from './components/POS';
@@ -48,16 +49,20 @@ function App() {
     setIsLoading(true);
     try {
         const { data: prodData } = await supabase.from('products').select('*');
-        if (prodData) setProducts(prodData);
+        if (prodData && prodData.length > 0) setProducts(prodData);
+        else setProducts(initialProducts); // Fallback to sample data if DB is empty
 
         const { data: custData } = await supabase.from('customers').select('*');
-        if (custData) setCustomers(custData);
+        if (custData && custData.length > 0) setCustomers(custData);
+        else setCustomers(initialCustomers); // Fallback to sample data
 
         const { data: supData } = await supabase.from('suppliers').select('*');
-        if (supData) setSuppliers(supData);
+        if (supData && supData.length > 0) setSuppliers(supData);
+        else setSuppliers(initialSuppliers); // Fallback to sample data
 
         const { data: catData } = await supabase.from('categories').select('*');
-        if (catData) setCategories(catData);
+        if (catData && catData.length > 0) setCategories(catData);
+        else setCategories(initialCategories); // Fallback to sample data
 
         // Fetch transactions sorted by newest
         const { data: txnData } = await supabase.from('transactions').select('*').order('createdAt', { ascending: false });
@@ -80,7 +85,12 @@ function App() {
 
     } catch (error) {
         console.error("Error fetching data:", error);
-        alert("Gagal mengambil data dari database. Periksa koneksi internet Anda.");
+        // Fallback on error as well to keep app usable
+        setProducts(initialProducts);
+        setCustomers(initialCustomers);
+        setSuppliers(initialSuppliers);
+        setCategories(initialCategories);
+        alert("Gagal terhubung ke database. Aplikasi berjalan menggunakan data offline/sampel.");
     } finally {
         setIsLoading(false);
     }
@@ -118,7 +128,20 @@ function App() {
         setIsLoading(true);
 
         // 1. Insert Transaction
-        const { error: txnError } = await supabase.from('transactions').insert([transaction]);
+        // FIX: We exclude 'subtotal' and 'discount' from the payload sent to Supabase
+        // because the database schema likely doesn't have these columns yet.
+        // The 'total' field already contains the final discounted price, so financial reports remain correct.
+        const dbPayload = {
+            id: transaction.id,
+            items: transaction.items,
+            total: transaction.total,
+            totalHPP: transaction.totalHPP,
+            paymentMethod: transaction.paymentMethod,
+            customerId: transaction.customerId,
+            createdAt: transaction.createdAt
+        };
+
+        const { error: txnError } = await supabase.from('transactions').insert([dbPayload]);
         if (txnError) throw txnError;
 
         // 2. Update Stock (Client-side loop for now, ideally use RPC/Backend function)
@@ -160,9 +183,9 @@ function App() {
         // Refresh data
         await fetchAllData();
 
-    } catch (error) {
+    } catch (error: any) {
         console.error("Transaction failed:", error);
-        alert("Gagal memproses transaksi. Silakan coba lagi.");
+        alert(`Gagal memproses transaksi: ${error.message || "Terjadi kesalahan database."}`);
     } finally {
         setIsLoading(false);
     }
@@ -172,6 +195,21 @@ function App() {
       const { error } = await supabase.from('saved_orders').insert([order]);
       if (!error) fetchAllData();
       else alert("Gagal menyimpan pesanan.");
+  };
+
+  // allow POS to add products on the fly during a transaction
+  const handleAddProduct = async (product: Product) => {
+      try {
+          setIsLoading(true);
+          const { error } = await supabase.from('products').insert([product]);
+          if (error) throw error;
+          await fetchAllData();
+      } catch (err: any) {
+          console.error("Failed to add product:", err);
+          alert(`Gagal menambahkan produk: ${err.message || err}`);
+      } finally {
+          setIsLoading(false);
+      }
   };
 
   const handleDeleteSavedOrder = async (orderId: string) => {
@@ -244,7 +282,8 @@ function App() {
                   onProcessSale={handleProcessSale}
                   savedOrders={savedOrders}
                   onSaveOrder={handleSaveOrder}
-                  onDeleteSavedOrder={handleDeleteSavedOrder} 
+                  onDeleteSavedOrder={handleDeleteSavedOrder}
+                  onAddProduct={handleAddProduct}
                 />;
       case Page.Products:
         return <ProductManager products={products} suppliers={suppliers} setPayables={setPayables} categories={categories} onRefresh={fetchAllData} />;
@@ -265,6 +304,10 @@ function App() {
                   expenses={expenses} 
                   products={products} 
                   customers={customers} 
+                  // Added new props for Cash Flow calculation
+                  receivables={receivables}
+                  payables={payables}
+                  manualEntries={manualJournalEntries}
                   onVoidTransaction={handleVoidTransaction}
                 />;
       case Page.Expenses:

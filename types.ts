@@ -58,7 +58,9 @@ export type PaymentMethod = 'Cash' | 'QRIS' | 'Card' | 'Transfer' | 'Pay Later';
 export interface Transaction {
   id: string;
   items: CartItem[];
-  total: number;
+  subtotal: number; // Total sebelum diskon
+  discount: number; // Nominal diskon
+  total: number; // Total akhir yang harus dibayar
   totalHPP: number;
   paymentMethod: PaymentMethod;
   customerId?: string;

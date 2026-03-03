@@ -17,6 +17,18 @@ interface DebtManagerProps {
     onRefresh: () => void;
 }
 
+const StatCardSimple: React.FC<{ title: string; value: string; colorClass: string; iconName: React.ComponentProps<typeof Icon>['name'] }> = ({ title, value, colorClass, iconName }) => (
+    <div className="bg-white p-4 rounded-lg shadow-md flex items-center justify-between border-l-4 border-transparent" style={{ borderColor: colorClass.replace('text-', 'border-') }}>
+        <div>
+            <p className="text-sm text-gray-500">{title}</p>
+            <p className={`text-2xl font-bold ${colorClass}`}>{value}</p>
+        </div>
+        <div className={`p-2 rounded-full bg-gray-100 ${colorClass}`}>
+            <Icon name={iconName} className="w-6 h-6" />
+        </div>
+    </div>
+);
+
 const ReceivableHistoryModal: React.FC<{
     receivable: Receivable;
     transaction?: Transaction;
@@ -225,6 +237,8 @@ const DebtManager: React.FC<DebtManagerProps> = ({ receivables, payables, custom
     const [historyModalReceivable, setHistoryModalReceivable] = useState<Receivable | null>(null);
     const [historyModalPayable, setHistoryModalPayable] = useState<Payable | null>(null);
     const [receivableSearchTerm, setReceivableSearchTerm] = useState('');
+    const [receivableStartDate, setReceivableStartDate] = useState('');
+    const [receivableEndDate, setReceivableEndDate] = useState('');
 
     const getCustomerName = (id: string) => customers.find(c => c.id === id)?.name || 'N/A';
     const getSupplierName = (id: string) => suppliers.find(s => s.id === id)?.name || 'N/A';
@@ -246,7 +260,6 @@ const DebtManager: React.FC<DebtManagerProps> = ({ receivables, payables, custom
                     paymentDate: new Date().toISOString(),
                 };
                 
-                // Optimistic update for the modal logic only? No, let's just update DB
                 const newPaidAmount = selectedDebt.paidAmount + paymentAmount;
                 const newPayments = [...selectedDebt.payments, newPaymentRecord];
 
@@ -287,6 +300,22 @@ const DebtManager: React.FC<DebtManagerProps> = ({ receivables, payables, custom
     };
 
     const isOverdue = (dueDate: string) => new Date(dueDate) < new Date();
+    const toDateKey = (dateStr: string) => {
+        const date = new Date(dateStr);
+        if (Number.isNaN(date.getTime())) return '';
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    };
+    const getReceivableTransactionDateKey = (receivable: Receivable) => {
+        const linkedTransaction = transactions.find(t => t.id === receivable.transactionId);
+        return toDateKey(linkedTransaction?.createdAt || receivable.createdAt);
+    };
+
+    // --- Calculations for Summary Cards ---
+    const totalUnpaidReceivables = receivables.reduce((sum, r) => sum + (r.totalAmount - r.paidAmount), 0);
+    const totalUnpaidPayables = payables.reduce((sum, p) => sum + (p.totalAmount - p.paidAmount), 0);
 
     const filteredReceivables = useMemo(() => {
         return receivables
@@ -295,8 +324,18 @@ const DebtManager: React.FC<DebtManagerProps> = ({ receivables, payables, custom
                 getCustomerName(r.customerId)
                 .toLowerCase()
                 .includes(receivableSearchTerm.toLowerCase())
-            );
-    }, [receivables, receivableSearchTerm, customers]);
+            )
+            .filter(r => {
+                const transactionDateKey = getReceivableTransactionDateKey(r);
+                if (!transactionDateKey) return false;
+                if (receivableStartDate && transactionDateKey < receivableStartDate) return false;
+                if (receivableEndDate && transactionDateKey > receivableEndDate) return false;
+                return true;
+            });
+    }, [receivables, receivableSearchTerm, receivableStartDate, receivableEndDate, customers, transactions]);
+
+    // --- Calculate Total Displayed based on Filter ---
+    const displayedReceivableTotal = filteredReceivables.reduce((sum, r) => sum + (r.totalAmount - r.paidAmount), 0);
 
     const getTransactionForReceivable = (receivable: Receivable | null) => {
         if (!receivable) return undefined;
@@ -306,6 +345,22 @@ const DebtManager: React.FC<DebtManagerProps> = ({ receivables, payables, custom
     return (
         <div className="space-y-6">
             <h1 className="text-3xl font-bold">Manajemen Utang Piutang</h1>
+
+            {/* Summary Cards - Added as requested */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <StatCardSimple 
+                    title="Total Piutang Pelanggan (Aset)" 
+                    value={formatCurrency(totalUnpaidReceivables)} 
+                    colorClass="text-green-600"
+                    iconName="arrow-down"
+                />
+                <StatCardSimple 
+                    title="Total Utang Toko (Kewajiban)" 
+                    value={formatCurrency(totalUnpaidPayables)} 
+                    colorClass="text-red-600"
+                    iconName="arrow-up"
+                />
+            </div>
 
             <div className="border-b border-gray-200">
                 <nav className="-mb-px flex space-x-8" aria-label="Tabs">
@@ -321,85 +376,120 @@ const DebtManager: React.FC<DebtManagerProps> = ({ receivables, payables, custom
             <div className="bg-white p-4 rounded-lg shadow-md">
                 {activeTab === 'receivables' && (
                     <>
-                    <div className="mb-4">
-                        <div className="relative">
-                           <Icon name="search" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
-                           <input
-                               type="text"
-                               placeholder="Cari nama pelanggan..."
-                               value={receivableSearchTerm}
-                               onChange={(e) => setReceivableSearchTerm(e.target.value)}
-                               className="pl-10 p-2 border rounded-md w-full sm:w-1/3 focus:ring-blue-500 focus:border-blue-500"
-                           />
+                    <div className="mb-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <div className="w-full md:w-2/3 space-y-3">
+                            <div className="relative">
+                                <Icon name="search" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
+                                <input
+                                    type="text"
+                                    placeholder="Cari nama pelanggan..."
+                                    value={receivableSearchTerm}
+                                    onChange={(e) => setReceivableSearchTerm(e.target.value)}
+                                    className="pl-10 p-2 border rounded-md w-full focus:ring-blue-500 focus:border-blue-500"
+                                />
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <div>
+                                    <label className="block text-xs font-semibold text-gray-600 mb-1">Tanggal Transaksi Dari</label>
+                                    <input
+                                        type="date"
+                                        value={receivableStartDate}
+                                        onChange={(e) => setReceivableStartDate(e.target.value)}
+                                        className="p-2 border rounded-md w-full focus:ring-blue-500 focus:border-blue-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-semibold text-gray-600 mb-1">Tanggal Transaksi Sampai</label>
+                                    <input
+                                        type="date"
+                                        value={receivableEndDate}
+                                        onChange={(e) => setReceivableEndDate(e.target.value)}
+                                        className="p-2 border rounded-md w-full focus:ring-blue-500 focus:border-blue-500"
+                                    />
+                                </div>
+                            </div>
                         </div>
+                        
+                        {/* Dynamic "Total Tertampil" for quick check */}
+                        {(receivableSearchTerm || receivableStartDate || receivableEndDate) && (
+                             <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2">
+                                <span className="text-sm text-blue-800 font-medium">Total Hasil Pencarian: </span>
+                                <span className="text-lg font-bold text-blue-700">{formatCurrency(displayedReceivableTotal)}</span>
+                             </div>
+                        )}
                     </div>
-                    <table className="w-full text-sm text-left">
-                        <thead className="text-xs text-gray-700 uppercase bg-gray-50">
-                            <tr>
-                                <th className="px-6 py-3">Pelanggan</th>
-                                <th className="px-6 py-3">Total</th>
-                                <th className="px-6 py-3">Sisa</th>
-                                <th className="px-6 py-3">Jatuh Tempo</th>
-                                <th className="px-6 py-3">Aksi</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {filteredReceivables.map(r => (
-                                <tr key={r.id} className="bg-white border-b hover:bg-gray-50">
-                                    <td className="px-6 py-4 font-medium">{getCustomerName(r.customerId)}</td>
-                                    <td className="px-6 py-4">{formatCurrency(r.totalAmount)}</td>
-                                    <td className="px-6 py-4 font-bold text-red-600">{formatCurrency(r.totalAmount - r.paidAmount)}</td>
-                                    <td className={`px-6 py-4 ${isOverdue(r.dueDate) ? 'text-red-500 font-semibold' : ''}`}>{formatDate(r.dueDate)}</td>
-                                    <td className="px-6 py-4 flex space-x-2">
-                                        <button onClick={() => openPaymentModal(r)} className="px-3 py-1 text-sm bg-green-500 text-white rounded hover:bg-green-600">Bayar</button>
-                                        <button onClick={() => setHistoryModalReceivable(r)} className="px-3 py-1 text-sm bg-white border border-gray-300 text-gray-700 rounded hover:bg-gray-100">Riwayat & Detail</button>
-                                    </td>
-                                </tr>
-                            ))}
-                             {filteredReceivables.length === 0 && (
+
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm text-left">
+                            <thead className="text-xs text-gray-700 uppercase bg-gray-50">
                                 <tr>
-                                    <td colSpan={5} className="text-center py-10 text-gray-500">
-                                        {receivables.filter(r => r.totalAmount > r.paidAmount).length > 0 ? 'Pelanggan tidak ditemukan.' : 'Hore! Tidak ada piutang yang belum lunas.'}
-                                    </td>
+                                    <th className="px-6 py-3">Pelanggan</th>
+                                    <th className="px-6 py-3">Total</th>
+                                    <th className="px-6 py-3">Sisa</th>
+                                    <th className="px-6 py-3">Jatuh Tempo</th>
+                                    <th className="px-6 py-3">Aksi</th>
                                 </tr>
-                            )}
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody>
+                                {filteredReceivables.map(r => (
+                                    <tr key={r.id} className="bg-white border-b hover:bg-gray-50">
+                                        <td className="px-6 py-4 font-medium">{getCustomerName(r.customerId)}</td>
+                                        <td className="px-6 py-4">{formatCurrency(r.totalAmount)}</td>
+                                        <td className="px-6 py-4 font-bold text-red-600">{formatCurrency(r.totalAmount - r.paidAmount)}</td>
+                                        <td className={`px-6 py-4 ${isOverdue(r.dueDate) ? 'text-red-500 font-semibold' : ''}`}>{formatDate(r.dueDate)}</td>
+                                        <td className="px-6 py-4 flex space-x-2">
+                                            <button onClick={() => openPaymentModal(r)} className="px-3 py-1 text-sm bg-green-500 text-white rounded hover:bg-green-600">Bayar</button>
+                                            <button onClick={() => setHistoryModalReceivable(r)} className="px-3 py-1 text-sm bg-white border border-gray-300 text-gray-700 rounded hover:bg-gray-100">Riwayat</button>
+                                        </td>
+                                    </tr>
+                                ))}
+                                {filteredReceivables.length === 0 && (
+                                    <tr>
+                                        <td colSpan={5} className="text-center py-10 text-gray-500">
+                                            {receivables.filter(r => r.totalAmount > r.paidAmount).length > 0 ? 'Pelanggan tidak ditemukan.' : 'Hore! Tidak ada piutang yang belum lunas.'}
+                                        </td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
                     </>
                 )}
                 {activeTab === 'payables' && (
-                     <table className="w-full text-sm text-left">
-                        <thead className="text-xs text-gray-700 uppercase bg-gray-50">
-                            <tr>
-                                <th className="px-6 py-3">Supplier</th>
-                                <th className="px-6 py-3">Total</th>
-                                <th className="px-6 py-3">Sisa</th>
-                                <th className="px-6 py-3">Jatuh Tempo</th>
-                                <th className="px-6 py-3">Aksi</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {payables.filter(p => p.totalAmount > p.paidAmount).map(p => (
-                                <tr key={p.id} className="bg-white border-b hover:bg-gray-50">
-                                    <td className="px-6 py-4 font-medium">{getSupplierName(p.supplierId)}</td>
-                                    <td className="px-6 py-4">{formatCurrency(p.totalAmount)}</td>
-                                    <td className="px-6 py-4 font-bold text-red-600">{formatCurrency(p.totalAmount - p.paidAmount)}</td>
-                                    <td className={`px-6 py-4 ${isOverdue(p.dueDate) ? 'text-red-500 font-semibold' : ''}`}>{formatDate(p.dueDate)}</td>
-                                    <td className="px-6 py-4 flex space-x-2">
-                                        <button onClick={() => openPaymentModal(p)} className="px-3 py-1 text-sm bg-green-500 text-white rounded hover:bg-green-600">Bayar</button>
-                                        <button onClick={() => setHistoryModalPayable(p)} className="px-3 py-1 text-sm bg-white border border-gray-300 text-gray-700 rounded hover:bg-gray-100">Riwayat</button>
-                                    </td>
-                                </tr>
-                            ))}
-                            {payables.filter(p => p.totalAmount > p.paidAmount).length === 0 && (
+                     <div className="overflow-x-auto">
+                        <table className="w-full text-sm text-left">
+                            <thead className="text-xs text-gray-700 uppercase bg-gray-50">
                                 <tr>
-                                    <td colSpan={5} className="text-center py-10 text-gray-500">
-                                        Tidak ada utang ke supplier.
-                                    </td>
+                                    <th className="px-6 py-3">Supplier</th>
+                                    <th className="px-6 py-3">Total</th>
+                                    <th className="px-6 py-3">Sisa</th>
+                                    <th className="px-6 py-3">Jatuh Tempo</th>
+                                    <th className="px-6 py-3">Aksi</th>
                                 </tr>
-                            )}
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody>
+                                {payables.filter(p => p.totalAmount > p.paidAmount).map(p => (
+                                    <tr key={p.id} className="bg-white border-b hover:bg-gray-50">
+                                        <td className="px-6 py-4 font-medium">{getSupplierName(p.supplierId)}</td>
+                                        <td className="px-6 py-4">{formatCurrency(p.totalAmount)}</td>
+                                        <td className="px-6 py-4 font-bold text-red-600">{formatCurrency(p.totalAmount - p.paidAmount)}</td>
+                                        <td className={`px-6 py-4 ${isOverdue(p.dueDate) ? 'text-red-500 font-semibold' : ''}`}>{formatDate(p.dueDate)}</td>
+                                        <td className="px-6 py-4 flex space-x-2">
+                                            <button onClick={() => openPaymentModal(p)} className="px-3 py-1 text-sm bg-green-500 text-white rounded hover:bg-green-600">Bayar</button>
+                                            <button onClick={() => setHistoryModalPayable(p)} className="px-3 py-1 text-sm bg-white border border-gray-300 text-gray-700 rounded hover:bg-gray-100">Riwayat</button>
+                                        </td>
+                                    </tr>
+                                ))}
+                                {payables.filter(p => p.totalAmount > p.paidAmount).length === 0 && (
+                                    <tr>
+                                        <td colSpan={5} className="text-center py-10 text-gray-500">
+                                            Tidak ada utang ke supplier.
+                                        </td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
                 )}
             </div>
             

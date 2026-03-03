@@ -99,7 +99,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setCurrentPage, openShor
             aria-label="Sidebar"
         >
         <div className={`px-3 py-4 flex items-center ${isCollapsed ? 'justify-center' : 'justify-between'}`}>
-            {!isCollapsed && <span className="text-2xl font-semibold whitespace-nowrap text-blue-700">LunasKas</span>}
+            {!isCollapsed && <span className="text-2xl font-semibold whitespace-nowrap text-blue-700">Toko Ibu Ucil</span>}
             
             {/* Close button for mobile */}
             <button onClick={onCloseMobile} className="md:hidden text-gray-500 hover:bg-gray-100 p-1 rounded">

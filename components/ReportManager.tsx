@@ -1,6 +1,5 @@
-
-import React, { useState, useMemo } from 'react';
-import { Transaction, Expense, Product, Customer } from '../types';
+import React, { useMemo, useState } from 'react';
+import { Transaction, Expense, Product, Customer, Receivable, Payable, ManualJournalEntry } from '../types';
 import Modal from './common/Modal';
 import Icon from './common/Icon';
 
@@ -11,6 +10,9 @@ interface ReportManagerProps {
   expenses: Expense[];
   products: Product[];
   customers: Customer[];
+  receivables: Receivable[];
+  payables: Payable[];
+  manualEntries: ManualJournalEntry[];
   onVoidTransaction: (transactionId: string, action: 'void' | 'edit') => void;
 }
 
@@ -21,7 +23,8 @@ const ReportCard: React.FC<{ title: string; value: string; colorClass: string }>
     </div>
 );
 
-const ReportManager: React.FC<ReportManagerProps> = ({ transactions, expenses, products, customers, onVoidTransaction }) => {
+const ReportManager: React.FC<ReportManagerProps> = ({ transactions, expenses, products, customers, receivables, payables, manualEntries, onVoidTransaction }) => {
+    const HISTORY_ROWS_PER_PAGE = 10;
     const today = new Date();
     const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
     const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().slice(0, 10);
@@ -30,6 +33,7 @@ const ReportManager: React.FC<ReportManagerProps> = ({ transactions, expenses, p
     const [endDate, setEndDate] = useState(lastDayOfMonth);
     const [productFilter, setProductFilter] = useState('');
     const [customerFilter, setCustomerFilter] = useState('');
+    const [historyPage, setHistoryPage] = useState(1);
 
     const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
 
@@ -38,6 +42,7 @@ const ReportManager: React.FC<ReportManagerProps> = ({ transactions, expenses, p
         return customers.find(c => c.id === customerId)?.name || 'Pelanggan Dihapus';
     };
 
+    // --- Profit & Loss Calculation (Laba Rugi) ---
     const reportData = useMemo(() => {
         const start = new Date(startDate);
         start.setHours(0, 0, 0, 0);
@@ -60,8 +65,78 @@ const ReportManager: React.FC<ReportManagerProps> = ({ transactions, expenses, p
         const totalExpenses = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
         const netProfit = grossProfit - totalExpenses;
 
-        return { totalRevenue, totalHPP, grossProfit, totalExpenses, netProfit, filteredExpenses };
+        return { totalRevenue, totalHPP, grossProfit, totalExpenses, netProfit };
     }, [startDate, endDate, transactions, expenses]);
+
+    // --- Cash Flow Calculation (Arus Kas) ---
+    const cashFlowData = useMemo(() => {
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+
+        // Helper to check if a date is before the selected period
+        const isBefore = (dateStr: string) => new Date(dateStr) < start;
+        // Helper to check if a date is within the selected period
+        const isDuring = (dateStr: string) => {
+            const d = new Date(dateStr);
+            return d >= start && d <= end;
+        };
+
+        let balanceBefore = 0;
+        let cashIn = 0;
+        let cashOut = 0;
+
+        // 1. Transactions (Only Cash Sales count immediately)
+        // Note: Pay Later transactions don't count as cash here, only their down payments (via receivables)
+        transactions.forEach(t => {
+            if (t.paymentMethod !== 'Pay Later') {
+                if (isBefore(t.createdAt)) balanceBefore += t.total;
+                else if (isDuring(t.createdAt)) cashIn += t.total;
+            }
+        });
+
+        // 2. Receivable Payments (Including Down Payments & Installments)
+        receivables.forEach(r => {
+            r.payments.forEach(p => {
+                if (isBefore(p.paymentDate)) balanceBefore += p.amount;
+                else if (isDuring(p.paymentDate)) cashIn += p.amount;
+            });
+        });
+
+        // 3. Payable Payments (Supplier Payments)
+        payables.forEach(p => {
+            p.payments.forEach(pay => {
+                if (isBefore(pay.paymentDate)) balanceBefore -= pay.amount;
+                else if (isDuring(pay.paymentDate)) cashOut += pay.amount;
+            });
+        });
+
+        // 4. Expenses
+        expenses.forEach(e => {
+            if (isBefore(e.date)) balanceBefore -= e.amount;
+            else if (isDuring(e.date)) cashOut += e.amount;
+        });
+
+        // 5. Manual Journal Entries (Capital Injection, Owner Withdrawal, etc)
+        manualEntries.forEach(m => {
+            if (isBefore(m.date)) {
+                if (m.type === 'Masuk') balanceBefore += m.amount;
+                else balanceBefore -= m.amount;
+            } else if (isDuring(m.date)) {
+                if (m.type === 'Masuk') cashIn += m.amount;
+                else cashOut += m.amount;
+            }
+        });
+
+        return {
+            beginningBalance: balanceBefore,
+            cashIn,
+            cashOut,
+            endingBalance: balanceBefore + cashIn - cashOut
+        };
+
+    }, [startDate, endDate, transactions, receivables, payables, expenses, manualEntries]);
     
     const filteredHistory = useMemo(() => {
         const start = new Date(startDate);
@@ -78,6 +153,13 @@ const ReportManager: React.FC<ReportManagerProps> = ({ transactions, expenses, p
         }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()); // Sort newest first
     }, [startDate, endDate, customerFilter, productFilter, transactions]);
 
+    const totalHistoryPages = Math.max(1, Math.ceil(filteredHistory.length / HISTORY_ROWS_PER_PAGE));
+    const safeHistoryPage = Math.min(historyPage, totalHistoryPages);
+    const paginatedHistory = useMemo(() => {
+        const startIndex = (safeHistoryPage - 1) * HISTORY_ROWS_PER_PAGE;
+        return filteredHistory.slice(startIndex, startIndex + HISTORY_ROWS_PER_PAGE);
+    }, [filteredHistory, safeHistoryPage]);
+
     const handleAction = (action: 'void' | 'edit') => {
         if (!selectedTransaction) return;
 
@@ -91,44 +173,109 @@ const ReportManager: React.FC<ReportManagerProps> = ({ transactions, expenses, p
         }
     }
 
+    // Calculate implied discount based on items total vs saved total
+    const calculateImpliedDiscount = (t: Transaction) => {
+        const realTotal = t.total;
+        const itemsTotal = t.items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+        return itemsTotal - realTotal;
+    };
+
+    const selectedTxnDiscount = selectedTransaction ? calculateImpliedDiscount(selectedTransaction) : 0;
+    const selectedTxnSubtotal = selectedTransaction ? selectedTransaction.total + selectedTxnDiscount : 0;
+
     return (
-        <div className="space-y-6">
+        <div className="space-y-8 pb-10">
             <h1 className="text-3xl font-bold">Laporan</h1>
             
             <div className="bg-white p-4 rounded-lg shadow-md flex items-center gap-4 flex-wrap">
                 <div>
                     <label className="text-sm font-medium text-gray-700">Dari Tanggal</label>
-                    <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="mt-1 block w-full sm:w-auto p-2 border rounded-md" />
+                    <input type="date" value={startDate} onChange={(e) => { setStartDate(e.target.value); setHistoryPage(1); }} className="mt-1 block w-full sm:w-auto p-2 border rounded-md" />
                 </div>
                 <div>
                     <label className="text-sm font-medium text-gray-700">Sampai Tanggal</label>
-                    <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="mt-1 block w-full sm:w-auto p-2 border rounded-md" />
+                    <input type="date" value={endDate} onChange={(e) => { setEndDate(e.target.value); setHistoryPage(1); }} className="mt-1 block w-full sm:w-auto p-2 border rounded-md" />
                 </div>
                 <div>
                     <label className="text-sm font-medium text-gray-700">Filter Produk</label>
-                    <select value={productFilter} onChange={e => setProductFilter(e.target.value)} className="mt-1 block w-full sm:w-auto p-2 border rounded-md">
+                    <select value={productFilter} onChange={e => { setProductFilter(e.target.value); setHistoryPage(1); }} className="mt-1 block w-full sm:w-auto p-2 border rounded-md">
                         <option value="">Semua Produk</option>
                         {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
                 </div>
                 <div>
                     <label className="text-sm font-medium text-gray-700">Filter Pelanggan</label>
-                    <select value={customerFilter} onChange={e => setCustomerFilter(e.target.value)} className="mt-1 block w-full sm:w-auto p-2 border rounded-md">
+                    <select value={customerFilter} onChange={e => { setCustomerFilter(e.target.value); setHistoryPage(1); }} className="mt-1 block w-full sm:w-auto p-2 border rounded-md">
                         <option value="">Semua Pelanggan</option>
                         {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </select>
                 </div>
             </div>
 
-            <h2 className="text-2xl font-semibold">Laporan Laba / Rugi</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                <ReportCard title="Total Penjualan (Omzet)" value={formatCurrency(reportData.totalRevenue)} colorClass="text-blue-600" />
-                <ReportCard title="Laba Kotor" value={formatCurrency(reportData.grossProfit)} colorClass="text-green-600" />
-                <ReportCard title="Laba Bersih" value={formatCurrency(reportData.netProfit)} colorClass={reportData.netProfit >= 0 ? 'text-green-700' : 'text-red-700'} />
-            </div>
+            {/* Section: Laba Rugi */}
+            <section>
+                <h2 className="text-2xl font-semibold mb-4 flex items-center gap-2">
+                    <span className="bg-blue-600 w-1 h-6 rounded-full"></span>
+                    Laporan Laba / Rugi (Profit & Loss)
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <ReportCard title="Total Penjualan (Omzet)" value={formatCurrency(reportData.totalRevenue)} colorClass="text-blue-600" />
+                    <ReportCard title="Laba Kotor (Omzet - HPP)" value={formatCurrency(reportData.grossProfit)} colorClass="text-green-600" />
+                    <ReportCard title="Laba Bersih (Dikurangi Biaya)" value={formatCurrency(reportData.netProfit)} colorClass={reportData.netProfit >= 0 ? 'text-green-700' : 'text-red-700'} />
+                </div>
+            </section>
+
+            {/* Section: Arus Kas */}
+            <section>
+                <h2 className="text-2xl font-semibold mb-4 flex items-center gap-2">
+                    <span className="bg-green-600 w-1 h-6 rounded-full"></span>
+                    Laporan Arus Kas (Cash Flow)
+                </h2>
+                
+                {/* Info Box explaining the difference */}
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 text-sm text-blue-800 flex items-start gap-3">
+                    <Icon name="book" className="w-5 h-5 mt-0.5 shrink-0" />
+                    <div>
+                        <p className="font-bold mb-1">Mengapa Laba Rugi & Saldo Kas Berbeda?</p>
+                        <ul className="list-disc list-inside space-y-1 opacity-90">
+                            <li><strong>Laba Rugi</strong> hanya menghitung Pendapatan Jualan dikurangi Biaya. Modal Awal tidak dianggap "Pendapatan".</li>
+                            <li><strong>Saldo Kas</strong> menghitung semua uang fisik yang Anda pegang, termasuk Modal Awal, Pinjaman, dan Bayar Utang.</li>
+                            <li>Jika Laba Anda minus (Rugi) tapi Saldo Kas positif, itu artinya Anda hidup dari Modal Awal.</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div className="bg-white rounded-lg shadow-md overflow-hidden">
+                    <div className="grid grid-cols-1 md:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-gray-200">
+                        <div className="p-6 text-center md:text-left">
+                            <p className="text-gray-500 text-sm font-medium uppercase tracking-wider">Saldo Awal</p>
+                            <p className="text-gray-400 text-xs mb-1">(Sebelum {new Date(startDate).toLocaleDateString('id-ID')})</p>
+                            <p className="text-2xl font-bold text-gray-700">{formatCurrency(cashFlowData.beginningBalance)}</p>
+                        </div>
+                         <div className="p-6 text-center md:text-left bg-green-50">
+                            <p className="text-green-800 text-sm font-medium uppercase tracking-wider">Arus Kas Masuk</p>
+                            <p className="text-green-600 text-xs mb-1">(Jualan Tunai + Modal + Piutang Dibayar)</p>
+                            <p className="text-2xl font-bold text-green-700">+ {formatCurrency(cashFlowData.cashIn)}</p>
+                        </div>
+                        <div className="p-6 text-center md:text-left bg-red-50">
+                            <p className="text-red-800 text-sm font-medium uppercase tracking-wider">Arus Kas Keluar</p>
+                            <p className="text-red-600 text-xs mb-1">(Biaya + Belanja Stok + Bayar Utang)</p>
+                            <p className="text-2xl font-bold text-red-700">- {formatCurrency(cashFlowData.cashOut)}</p>
+                        </div>
+                        <div className="p-6 text-center md:text-left bg-gray-50">
+                            <p className="text-gray-800 text-sm font-medium uppercase tracking-wider">Saldo Akhir</p>
+                            <p className="text-gray-500 text-xs mb-1">(Uang di Tangan Saat Ini)</p>
+                            <p className={`text-3xl font-bold ${cashFlowData.endingBalance >= 0 ? 'text-blue-800' : 'text-red-800'}`}>
+                                {formatCurrency(cashFlowData.endingBalance)}
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </section>
             
-            <div className="bg-white p-6 rounded-lg shadow-md">
-                 <h2 className="text-xl font-semibold mb-4">Riwayat Penjualan</h2>
+            {/* Section: Riwayat Transaksi */}
+            <section className="bg-white p-6 rounded-lg shadow-md">
+                 <h2 className="text-xl font-semibold mb-4">Riwayat Transaksi Penjualan</h2>
                  <div className="overflow-x-auto">
                     <table className="w-full text-sm text-left">
                         <thead className="text-xs text-gray-700 uppercase bg-gray-50">
@@ -141,7 +288,7 @@ const ReportManager: React.FC<ReportManagerProps> = ({ transactions, expenses, p
                             </tr>
                         </thead>
                         <tbody>
-                            {filteredHistory.map(t => (
+                            {paginatedHistory.map(t => (
                                 <tr key={t.id} className="border-b hover:bg-gray-50">
                                     <td className="px-6 py-4 font-mono text-xs">{t.id}</td>
                                     <td className="px-6 py-4">{new Date(t.createdAt).toLocaleString('id-ID')}</td>
@@ -162,7 +309,30 @@ const ReportManager: React.FC<ReportManagerProps> = ({ transactions, expenses, p
                         </tbody>
                     </table>
                  </div>
-            </div>
+                 {filteredHistory.length > 0 && (
+                    <div className="mt-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+                        <p className="text-sm text-gray-600">
+                            Halaman {safeHistoryPage} dari {totalHistoryPages} - {filteredHistory.length} transaksi
+                        </p>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={() => setHistoryPage(prev => Math.max(1, prev - 1))}
+                                disabled={safeHistoryPage === 1}
+                                className="px-3 py-1.5 rounded-md border bg-white text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
+                            >
+                                Sebelumnya
+                            </button>
+                            <button
+                                onClick={() => setHistoryPage(prev => Math.min(totalHistoryPages, prev + 1))}
+                                disabled={safeHistoryPage === totalHistoryPages}
+                                className="px-3 py-1.5 rounded-md border bg-white text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
+                            >
+                                Berikutnya
+                            </button>
+                        </div>
+                    </div>
+                 )}
+            </section>
 
             {selectedTransaction && (
                 <Modal isOpen={!!selectedTransaction} onClose={() => setSelectedTransaction(null)} title="Detail Transaksi" size="lg">
@@ -210,9 +380,24 @@ const ReportManager: React.FC<ReportManagerProps> = ({ transactions, expenses, p
                                     </tbody>
                                 </table>
                             </div>
-                            <div className="flex justify-between font-bold border-t mt-2 pt-2">
-                                <span>Total</span>
-                                <span className="text-lg">{formatCurrency(selectedTransaction.total)}</span>
+                            
+                            <div className="space-y-1 border-t mt-2 pt-2">
+                                {selectedTxnDiscount > 0 && (
+                                    <>
+                                        <div className="flex justify-between text-sm text-gray-500">
+                                            <span>Subtotal</span>
+                                            <span>{formatCurrency(selectedTxnSubtotal)}</span>
+                                        </div>
+                                        <div className="flex justify-between text-sm text-red-500">
+                                            <span>Diskon</span>
+                                            <span>- {formatCurrency(selectedTxnDiscount)}</span>
+                                        </div>
+                                    </>
+                                )}
+                                <div className="flex justify-between font-bold text-lg text-blue-800">
+                                    <span>Total Bayar</span>
+                                    <span>{formatCurrency(selectedTransaction.total)}</span>
+                                </div>
                             </div>
                         </div>
 
