@@ -834,7 +834,13 @@ const POS: React.FC<POSProps> = ({ products, customers, onProcessSale, savedOrde
             </>
           )}
       <Modal isOpen={isCheckoutOpen} onClose={() => setCheckoutOpen(false)} title="Pembayaran">
-        <div className="space-y-4">
+        <form
+          className="space-y-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleFinalizeSale();
+          }}
+        >
           <div className="text-right border-b pb-4 bg-gray-50 -mx-4 px-4 pt-2 mb-4">
             <p className="text-gray-500 text-sm">Total Tagihan</p>
             <div className="flex flex-col items-end">
@@ -856,7 +862,17 @@ const POS: React.FC<POSProps> = ({ products, customers, onProcessSale, savedOrde
                   onFocus={() => setShowCustomerDropdown(true)}
                   onKeyDown={e => {
                       if (e.key === 'Enter') {
-                          e.preventDefault(); // Prevent form submission
+                          const term = customerSearchTerm.trim();
+
+                          // If customer is optional and left empty, let Enter submit the payment form
+                          // (same as clicking "Selesaikan").
+                          if (term === '' && paymentMethod !== 'Pay Later') {
+                              setShowCustomerDropdown(false);
+                              return;
+                          }
+
+                          // For Pay Later, customer is required; Enter should not submit the form here.
+                          e.preventDefault();
                           if (showCustomerDropdown && filteredCustomers.length > 0) {
                               handleSelectCustomer(filteredCustomers[0]);
                           } else {
@@ -908,15 +924,14 @@ const POS: React.FC<POSProps> = ({ products, customers, onProcessSale, savedOrde
                         onChange={e => setCashReceived(e.target.value)}
                         placeholder={`Pas: ${formatCurrency(finalTotal)}`}
                         min="0"
-                        onKeyDown={e => e.key === 'Enter' && handleFinalizeSale()}
                     />
                     
                     {/* Quick Cash Buttons */}
                     <div className="flex gap-2 mt-2 overflow-x-auto pb-1 scrollbar-hide">
-                         <button onClick={() => setCashReceived(finalTotal.toString())} className="whitespace-nowrap px-3 py-1 bg-gray-100 rounded-full text-xs font-medium border hover:bg-gray-200">Uang Pas</button>
-                         <button onClick={() => setCashReceived((Math.ceil(finalTotal / 5000) * 5000).toString())} className="whitespace-nowrap px-3 py-1 bg-gray-100 rounded-full text-xs font-medium border hover:bg-gray-200">Next 5k</button>
-                         <button onClick={() => setCashReceived((Math.ceil(finalTotal / 10000) * 10000).toString())} className="whitespace-nowrap px-3 py-1 bg-gray-100 rounded-full text-xs font-medium border hover:bg-gray-200">Next 10k</button>
-                         <button onClick={() => setCashReceived((Math.ceil(finalTotal / 50000) * 50000).toString())} className="whitespace-nowrap px-3 py-1 bg-gray-100 rounded-full text-xs font-medium border hover:bg-gray-200">Next 50k</button>
+                         <button type="button" onClick={() => setCashReceived(finalTotal.toString())} className="whitespace-nowrap px-3 py-1 bg-gray-100 rounded-full text-xs font-medium border hover:bg-gray-200">Uang Pas</button>
+                         <button type="button" onClick={() => setCashReceived((Math.ceil(finalTotal / 5000) * 5000).toString())} className="whitespace-nowrap px-3 py-1 bg-gray-100 rounded-full text-xs font-medium border hover:bg-gray-200">Next 5k</button>
+                         <button type="button" onClick={() => setCashReceived((Math.ceil(finalTotal / 10000) * 10000).toString())} className="whitespace-nowrap px-3 py-1 bg-gray-100 rounded-full text-xs font-medium border hover:bg-gray-200">Next 10k</button>
+                         <button type="button" onClick={() => setCashReceived((Math.ceil(finalTotal / 50000) * 50000).toString())} className="whitespace-nowrap px-3 py-1 bg-gray-100 rounded-full text-xs font-medium border hover:bg-gray-200">Next 50k</button>
                     </div>
                 </div>
                 {cashReceivedAmount >= finalTotal && (
@@ -955,12 +970,12 @@ const POS: React.FC<POSProps> = ({ products, customers, onProcessSale, savedOrde
             </div>
           )}
           <div className="flex justify-between gap-3 pt-6 mt-auto">
-            <button onClick={() => setCheckoutOpen(false)} className="flex-1 px-4 py-3 bg-gray-200 rounded-xl hover:bg-gray-300 font-medium text-gray-700">Batal</button>
-            <button onClick={handleFinalizeSale} className="flex-[2] px-4 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-bold shadow-md text-lg">
+            <button type="button" onClick={() => setCheckoutOpen(false)} className="flex-1 px-4 py-3 bg-gray-200 rounded-xl hover:bg-gray-300 font-medium text-gray-700">Batal</button>
+            <button type="submit" className="flex-[2] px-4 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-bold shadow-md text-lg">
               Selesaikan
             </button>
           </div>
-        </div>
+        </form>
       </Modal>
 
       {priceEntryModal.item && (
